@@ -1,8 +1,15 @@
+"""
+This script is designed to parse a CSV file into three queues that track the smoker temps and two different food temps. It reads these temps every 30 seconds though it misses some readings.
+
+Ben Robin 
+"""
+
 import csv
 import pika
 import sys
 import webbrowser
-import pathlib
+import time
+from datetime import datetime
 from util_logger import setup_logger
 
 # Call setup_logger to initialize logging
@@ -35,6 +42,14 @@ def connect_rabbitmq():
         logger.error(f"Error: Connection to RabbitMQ server failed: {e}")
         sys.exit(1)
 
+def send_message(channel, queue_name, message):
+    """Send a message to the specified RabbitMQ queue"""
+    try:
+        channel.basic_publish(exchange='', routing_key=queue_name, body=str(message))
+        logger.info(f" [x] Sent {message} to {queue_name}")
+    except Exception as e:
+        logger.error(f"Error: Could not send message to {queue_name}: {e}")
+
 def process_csv():
     """Process the CSV file and send messages to RabbitMQ queues"""
     try:
@@ -42,50 +57,32 @@ def process_csv():
         csv_file_path = "C:/Users/benja/OneDrive/Documents/Git/streaming-05-smart-smoker/smoker-temps.csv"
         with open(csv_file_path, newline='', encoding='utf-8-sig') as csvfile:
             reader = csv.DictReader(csvfile)
+            conn, ch = connect_rabbitmq()
             for data_row in reader:
-                timestamp = data_row['Time (UTC)']
+                timestamp_str = data_row['Time (UTC)']
                 smoker_temp_str = data_row['Channel1']
                 food_A_temp_str = data_row['Channel2']
                 food_B_temp_str = data_row['Channel3']
 
-                # Check if the temperature strings are empty
+                # Check if the temperature strings are empty and convert to float
                 if smoker_temp_str:
                     smoker_temp = float(smoker_temp_str)
-                    send_message("01-smoker", (timestamp, smoker_temp))
+                    send_message(ch, "01-smoker", (timestamp_str, smoker_temp))
                 if food_A_temp_str:
                     food_A_temp = float(food_A_temp_str)
-                    send_message("02-food-A", (timestamp, food_A_temp))
+                    send_message(ch, "02-food-A", (timestamp_str, food_A_temp))
                 if food_B_temp_str:
                     food_B_temp = float(food_B_temp_str)
-                    send_message("02-food-B", (timestamp, food_B_temp))
+                    send_message(ch, "02-food-B", (timestamp_str, food_B_temp))
 
-    except FileNotFoundError:
-        logger.error("CSV file not found.")
-        sys.exit(1)
-    except ValueError as e:
-        logger.error(f"Error processing CSV: {e}")
-        sys.exit(1)
+            
+            # Close the connection to the server
+            conn.close()
+
+    except FileNotFoundError as e:
+        logger.error(f"Error: File not found: {e}")
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        sys.exit(1)
-
-def send_message(queue_name: str, message: tuple):
-    """
-    Publish a message to the specified queue.
-
-    Parameters:
-        queue_name (str): The name of the queue
-        message (tuple): The message to be sent to the queue
-    """
-    try:
-        conn, ch = connect_rabbitmq()
-        ch.basic_publish(exchange="", routing_key=queue_name, body=str(message))
-        logger.info(f"Sent message to {queue_name}: {message}")
-    except Exception as e:
-        logger.error(f"Error sending message to {queue_name}: {e}")
-    finally:
-        # Close the connection to the server
-        conn.close()
+        logger.error(f"Error: An error occurred while processing the CSV file: {e}")
 
 if __name__ == "__main__":
     offer_rabbitmq_admin_site()
